@@ -1,6 +1,12 @@
 import * as ort from "onnxruntime-web";
 
 const STORAGE_KEY = "chip-pot-counter-config-v1";
+const ORT_WASM_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+
+// In local Vite dev, some setups can serve ORT's internal wasm files
+// through a fallback MIME type. Force a stable CDN path that serves
+// `application/wasm` so ORT can initialize consistently.
+ort.env.wasm.wasmPaths = ORT_WASM_DIST;
 
 /** @typedef {{ modelUrl: string; classesUrl: string; inputSize: number; minConfidence: number; maxFps: number; chipValues: Record<string, number> }} AppConfig */
 
@@ -110,7 +116,9 @@ function renderCaptureButton() {
     "aria-label",
     capturePaused ? "Resume capture" : "Pause capture",
   );
-  el.btnToggleCapture.title = capturePaused ? "Resume capture" : "Pause capture";
+  el.btnToggleCapture.title = capturePaused
+    ? "Resume capture"
+    : "Pause capture";
 }
 
 function setCapturePaused(paused, reason = "manual") {
@@ -120,12 +128,20 @@ function setCapturePaused(paused, reason = "manual") {
 
   if (!changed) return;
   if (capturePaused) {
+    if (!el.video.paused) {
+      el.video.pause();
+    }
     if (reason === "settings") {
       setStatus("Capture paused while settings are open.");
     } else {
       setStatus("Capture paused. Resume when you are ready.");
     }
     return;
+  }
+  if (el.video.srcObject && el.video.paused) {
+    el.video.play().catch(() => {
+      setStatus("Capture resumed, but video preview needs a user gesture.");
+    });
   }
   setStatus("Capture resumed.");
 }
@@ -240,7 +256,13 @@ function sigmoid(x) {
  * @param {number} videoWidth
  * @param {number} videoHeight
  */
-function renderMaskForDetection(pred, proto, inputSize, videoWidth, videoHeight) {
+function renderMaskForDetection(
+  pred,
+  proto,
+  inputSize,
+  videoWidth,
+  videoHeight,
+) {
   const bbox = pred.bbox;
   const coeffs = pred.maskCoeffs;
   if (!bbox || !coeffs || !maskCtx) return;
@@ -288,14 +310,16 @@ function renderMaskForDetection(pred, proto, inputSize, videoWidth, videoHeight)
       );
       let logit = 0;
       for (let c = 0; c < maskChannels; c++) {
-        logit += coeffs[c] * protoData[c * maskHeight * maskWidth + py * maskWidth + px];
+        logit +=
+          coeffs[c] *
+          protoData[c * maskHeight * maskWidth + py * maskWidth + px];
       }
       if (sigmoid(logit) < 0.5) continue;
       const i = (y * boxWidth + x) * 4;
       out[i] = rgb.r;
       out[i + 1] = rgb.g;
       out[i + 2] = rgb.b;
-      out[i + 3] = 105;
+      out[i + 3] = 85;
     }
   }
 
@@ -398,7 +422,9 @@ function iou(a, b) {
 }
 
 function nms(preds, threshold = 0.5) {
-  const sorted = [...preds].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  const sorted = [...preds].sort(
+    (a, b) => (b.confidence ?? 0) - (a.confidence ?? 0),
+  );
   /** @type {Detection[]} */
   const kept = [];
   for (const p of sorted) {
@@ -527,11 +553,15 @@ async function inferFrame() {
   const tensor = preprocessFrame(el.video, inputSize);
   const feeds = { [session.inputNames[0]]: tensor };
   const outputs = await session.run(feeds);
-  const outputList = session.outputNames.map((name) => outputs[name]).filter(Boolean);
+  const outputList = session.outputNames
+    .map((name) => outputs[name])
+    .filter(Boolean);
   const detectionOutput = outputList.find((t) => t.dims.length === 3);
   const protoOutput = outputList.find((t) => t.dims.length === 4);
   if (!detectionOutput || !protoOutput) {
-    throw new Error("Expected YOLOv8-seg outputs (detections + mask prototypes).");
+    throw new Error(
+      "Expected YOLOv8-seg outputs (detections + mask prototypes).",
+    );
   }
   const preds = extractDetections(
     detectionOutput,
