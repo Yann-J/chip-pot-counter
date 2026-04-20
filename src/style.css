@@ -193,6 +193,15 @@ h1 {
   border-color: var(--accent-dim);
 }
 
+.icon-btn.gear {
+  color: #dbeafe;
+}
+
+.icon-btn.gear .bi {
+  font-size: 22px;
+  line-height: 1;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
