@@ -39,6 +39,12 @@ body {
   margin-bottom: 0.5rem;
 }
 
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 h1 {
   font-size: 1.35rem;
   font-weight: 600;
@@ -197,7 +203,16 @@ h1 {
   color: #dbeafe;
 }
 
+.icon-btn.pause {
+  color: #fef3c7;
+}
+
 .icon-btn.gear .bi {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.icon-btn.pause .bi {
   font-size: 22px;
   line-height: 1;
 }

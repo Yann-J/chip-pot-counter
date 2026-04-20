@@ -15,15 +15,26 @@
     <div id="app">
       <header class="top-bar">
         <h1>Chip pot counter</h1>
-        <button
-          type="button"
-          class="icon-btn gear"
-          id="btn-settings"
-          aria-label="Settings"
-          title="Settings"
-        >
-          <i class="bi bi-gear-fill" aria-hidden="true"></i>
-        </button>
+        <div class="top-actions">
+          <button
+            type="button"
+            class="icon-btn pause"
+            id="btn-toggle-capture"
+            aria-label="Pause capture"
+            title="Pause capture"
+          >
+            <i class="bi bi-pause-fill" aria-hidden="true"></i>
+          </button>
+          <button
+            type="button"
+            class="icon-btn gear"
+            id="btn-settings"
+            aria-label="Settings"
+            title="Settings"
+          >
+            <i class="bi bi-gear-fill" aria-hidden="true"></i>
+          </button>
+        </div>
       </header>
 
       <p class="hint" id="status-line">Configure your ONNX model in settings, then allow camera access.</p>

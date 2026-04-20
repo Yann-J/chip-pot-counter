@@ -49,6 +49,7 @@ const el = {
   canvas: /** @type {HTMLCanvasElement} */ (document.getElementById("overlay")),
   classCounts: document.getElementById("class-counts"),
   potTotal: document.getElementById("pot-total"),
+  btnToggleCapture: document.getElementById("btn-toggle-capture"),
   btnSettings: document.getElementById("btn-settings"),
   backdrop: document.getElementById("modal-backdrop"),
   dialog: /** @type {HTMLDialogElement} */ (
@@ -92,12 +93,41 @@ let modelConfigKey = null;
 
 let lastInferTime = 0;
 let inferBusy = false;
+let capturePaused = false;
 /** @type {Record<string, number>} */
 let lastCounts = {};
 let rafId = 0;
 
 function setStatus(text) {
   el.status.textContent = text;
+}
+
+function renderCaptureButton() {
+  const icon = el.btnToggleCapture.querySelector("i");
+  if (!icon) return;
+  icon.className = capturePaused ? "bi bi-play-fill" : "bi bi-pause-fill";
+  el.btnToggleCapture.setAttribute(
+    "aria-label",
+    capturePaused ? "Resume capture" : "Pause capture",
+  );
+  el.btnToggleCapture.title = capturePaused ? "Resume capture" : "Pause capture";
+}
+
+function setCapturePaused(paused, reason = "manual") {
+  const changed = capturePaused !== paused;
+  capturePaused = paused;
+  renderCaptureButton();
+
+  if (!changed) return;
+  if (capturePaused) {
+    if (reason === "settings") {
+      setStatus("Capture paused while settings are open.");
+    } else {
+      setStatus("Capture paused. Resume when you are ready.");
+    }
+    return;
+  }
+  setStatus("Capture resumed.");
 }
 
 function configFingerprint() {
@@ -517,7 +547,7 @@ async function inferFrame() {
 
 function loop(time) {
   rafId = requestAnimationFrame(loop);
-  if (!session || inferBusy) return;
+  if (!session || inferBusy || capturePaused) return;
   const maxFps = Math.max(1, Math.min(30, config.maxFps || 8));
   const interval = 1000 / maxFps;
   if (time - lastInferTime < interval) return;
@@ -552,6 +582,7 @@ async function startCamera() {
 }
 
 function openSettings() {
+  setCapturePaused(true, "settings");
   el.cfgKey.value = config.modelUrl;
   el.cfgModel.value = config.classesUrl;
   el.cfgVersion.value = String(config.inputSize);
@@ -638,9 +669,17 @@ el.btnAddClass.addEventListener("click", () => {
 
 el.btnSettings.addEventListener("click", () => openSettings());
 
+el.btnToggleCapture.addEventListener("click", () => {
+  setCapturePaused(!capturePaused, "manual");
+});
+
 el.btnCancel.addEventListener("click", () => closeSettings());
 
 el.backdrop.addEventListener("click", () => closeSettings());
+
+el.dialog.addEventListener("close", () => {
+  el.backdrop.classList.add("hidden");
+});
 
 el.btnSave.addEventListener("click", async (e) => {
   e.preventDefault();
@@ -657,6 +696,7 @@ async function init() {
   config = loadConfig();
   await startCamera();
   await ensureModel();
+  renderCaptureButton();
   rafId = requestAnimationFrame(loop);
 }
 
