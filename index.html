@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chip pot counter</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="top-bar">
+        <h1>Chip pot counter</h1>
+        <button
+          type="button"
+          class="icon-btn gear"
+          id="btn-settings"
+          aria-label="Settings"
+          title="Settings"
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" />
+          </svg>
+        </button>
+      </header>
+
+      <p class="hint" id="status-line">Configure your Roboflow model in settings, then allow camera access.</p>
+
+      <main class="layout">
+        <section class="video-panel">
+          <div class="video-wrap">
+            <video id="camera" playsinline muted autoplay></video>
+            <canvas id="overlay"></canvas>
+          </div>
+        </section>
+        <aside class="stats-panel">
+          <h2>Detections</h2>
+          <ul id="class-counts" class="class-counts"></ul>
+          <div class="total-block">
+            <span class="total-label">Pot value</span>
+            <span class="total-value" id="pot-total">—</span>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <div id="modal-backdrop" class="modal-backdrop hidden" aria-hidden="true"></div>
+    <dialog id="settings-dialog" class="settings-dialog">
+      <form id="settings-form" novalidate>
+        <h2>Configuration</h2>
+        <p class="form-hint">
+          Roboflow publishable key and model slug are stored only in this browser (localStorage).
+        </p>
+
+        <label class="field">
+          <span>Publishable API key</span>
+          <input type="password" id="cfg-key" name="publishableKey" autocomplete="off" placeholder="rf_..." />
+        </label>
+
+        <label class="field">
+          <span>Model slug (workspace/project)</span>
+          <input type="text" id="cfg-model" name="modelId" autocomplete="off" placeholder="my-workspace/chip-counter" />
+        </label>
+
+        <label class="field">
+          <span>Model version</span>
+          <input type="number" id="cfg-version" name="modelVersion" min="1" step="1" value="1" />
+        </label>
+
+        <label class="field inline">
+          <span>Min confidence</span>
+          <input type="number" id="cfg-confidence" name="minConfidence" min="0" max="1" step="0.05" value="0.4" />
+        </label>
+
+        <label class="field inline">
+          <span>Max inferences / sec</span>
+          <input type="number" id="cfg-fps" name="maxFps" min="1" max="30" step="1" value="8" />
+        </label>
+
+        <fieldset class="chip-values">
+          <legend>Chip value by class</legend>
+          <p class="form-hint">Use the exact class names from your Roboflow model. New classes appear here after they are seen in the video.</p>
+          <div id="chip-rows"></div>
+          <button type="button" class="secondary" id="btn-add-class">Add class</button>
+        </fieldset>
+
+        <div class="dialog-actions">
+          <button type="button" class="secondary" id="btn-cancel-settings">Cancel</button>
+          <button type="button" class="primary" id="btn-save-settings">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
