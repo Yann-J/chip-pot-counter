@@ -2,6 +2,10 @@
 
 A small browser app that uses your camera, runs a **YOLOv8 ONNX** model in-browser via [ONNX Runtime Web](https://www.npmjs.com/package/onnxruntime-web), draws boxes on a live overlay, counts detections per class, and sums a **pot value** from per-class chip amounts you configure.
 
+## Use the demo
+
+Head over to the static hosted version at <https://yann-j.github.io/chip-pot-counter/>
+
 ## Requirements
 
 - **Node.js** 20 or newer (matches the GitHub Actions workflow)
@@ -48,4 +52,8 @@ After changing model URL, classes URL, or input size, the app reloads the ONNX s
 
 ## Deploy to GitHub Pages
 
-On push to `main` or `master`, [.github/workflows/deploy-pages.yml](.github/workflows/deploy-pages.yml) runs `npm ci`, `npm run build`, and deploys the `dist/` artifact with **GitHub Pages**. Enable Pages in the repository settings if you have not already (source: **GitHub Actions**).
+On push to `main`, [.github/workflows/deploy-pages.yml](.github/workflows/deploy-pages.yml) runs `npm ci`, `npm run build`, and deploys the `dist/` artifact with **GitHub Pages**, together with the latest model if it is available.
+
+## Train a new model
+
+The model training is implemented in [train_yolov8_seg.ipynb](train_yolov8_seg.ipynb), which is known to run fine on [Google Colab](https://colab.research.google.com/). It requires access to a dataset from Roboflow, which you can fork from [my public workspace](https://app.roboflow.com/yanns-workspace-ufdsd/poker-chip-stacks-j395l/models), and configure your `ROBOFLOW_API_KEY` secret in colab.
