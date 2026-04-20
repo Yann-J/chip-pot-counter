@@ -9,12 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "inferencejs": "^1.2.3"
+    "onnxruntime-web": "^1.22.0"
   },
   "devDependencies": {
     "vite": "^6.3.5"
-  },
-  "overrides": {
-    "@rollup/rollup-linux-arm64-gnu": "file:stubs/rollup-linux-gnu-stub"
   }
 }

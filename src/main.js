@@ -1,14 +1,14 @@
-import { InferenceEngine, CVImage } from "inferencejs";
+import * as ort from "onnxruntime-web";
 
 const STORAGE_KEY = "chip-pot-counter-config-v1";
 
-/** @typedef {{ publishableKey: string; modelId: string; modelVersion: number; minConfidence: number; maxFps: number; chipValues: Record<string, number> }} AppConfig */
+/** @typedef {{ modelUrl: string; classesUrl: string; inputSize: number; minConfidence: number; maxFps: number; chipValues: Record<string, number> }} AppConfig */
 
 function defaultConfig() {
   return {
-    publishableKey: "",
-    modelId: "",
-    modelVersion: 1,
+    modelUrl: "models/model.onnx",
+    classesUrl: "models/classes.json",
+    inputSize: 640,
     minConfidence: 0.4,
     maxFps: 8,
     chipValues: {},
@@ -75,18 +75,20 @@ const el = {
 };
 
 const ctx = el.canvas.getContext("2d");
+const maskCanvas = document.createElement("canvas");
+const maskCtx = maskCanvas.getContext("2d");
 
 /** @type {AppConfig} */
 let config = loadConfig();
 /** @type {Set<string>} */
 const discoveredClasses = new Set(Object.keys(config.chipValues));
 
-/** @type {InferenceEngine | null} */
-let inferEngine = null;
+/** @type {ort.InferenceSession | null} */
+let session = null;
+/** @type {Record<number, string>} */
+let classNames = {};
 /** @type {string | null} */
-let workerId = null;
-/** @type {string | null} */
-let workerConfigKey = null;
+let modelConfigKey = null;
 
 let lastInferTime = 0;
 let inferBusy = false;
@@ -99,45 +101,61 @@ function setStatus(text) {
 }
 
 function configFingerprint() {
-  return `${config.modelId}|${config.modelVersion}|${config.publishableKey}`;
+  return `${config.modelUrl}|${config.classesUrl}|${config.inputSize}`;
 }
 
-async function stopInference() {
-  if (inferEngine && workerId) {
-    try {
-      await inferEngine.stopWorker(workerId);
-    } catch {
-      /* ignore */
-    }
+function resolveAssetUrl(value) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return new URL(trimmed, window.location.href).toString();
+}
+
+async function loadClassNames(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Unable to fetch classes file (${resp.status}).`);
   }
-  workerId = null;
-  workerConfigKey = null;
+  const data = await resp.json();
+  /** @type {Record<number, string>} */
+  const out = {};
+  for (const [k, v] of Object.entries(data)) {
+    const idx = parseInt(k, 10);
+    if (Number.isFinite(idx) && typeof v === "string") out[idx] = v;
+  }
+  return out;
 }
 
-async function ensureWorker() {
+function stopInference() {
+  session = null;
+  modelConfigKey = null;
+}
+
+async function ensureModel() {
   const fp = configFingerprint();
-  if (!config.publishableKey?.trim() || !config.modelId?.trim()) {
-    setStatus("Open settings and set your publishable key and model slug.");
+  if (!config.modelUrl?.trim() || !config.classesUrl?.trim()) {
+    setStatus("Open settings and configure model and classes URLs.");
     return;
   }
 
-  if (workerId && workerConfigKey === fp) return;
+  if (session && modelConfigKey === fp) return;
 
-  await stopInference();
+  stopInference();
   setStatus("Loading model…");
-
-  if (!inferEngine) inferEngine = new InferenceEngine();
+  const modelUrl = resolveAssetUrl(config.modelUrl);
+  const classesUrl = resolveAssetUrl(config.classesUrl);
 
   try {
-    workerId = await inferEngine.startWorker(
-      config.modelId.trim(),
-      Number(config.modelVersion) || 1,
-      config.publishableKey.trim(),
-    );
-    workerConfigKey = fp;
+    classNames = await loadClassNames(classesUrl);
+    Object.values(classNames).forEach((name) => discoveredClasses.add(name));
+    session = await ort.InferenceSession.create(modelUrl, {
+      executionProviders: ["wasm"],
+      graphOptimizationLevel: "all",
+    });
+    modelConfigKey = fp;
     setStatus("Model ready. Point the camera at the pot.");
   } catch (err) {
-    workerId = null;
+    session = null;
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`Model failed to load: ${msg}`);
   }
@@ -149,8 +167,114 @@ function isNormalizedBbox(b) {
   return vals.every((v) => typeof v === "number" && v >= 0 && v <= 1.0001);
 }
 
-/** @param {{ class?: string; confidence?: number; bbox?: { x: number; y: number; width: number; height: number } }[]} preds */
-function drawOverlay(preds, vw, vh) {
+function hslToRgb(h, s, l) {
+  const hh = ((h % 360) + 360) % 360;
+  const ss = Math.max(0, Math.min(1, s));
+  const ll = Math.max(0, Math.min(1, l));
+  const c = (1 - Math.abs(2 * ll - 1)) * ss;
+  const x = c * (1 - Math.abs(((hh / 60) % 2) - 1));
+  const m = ll - c / 2;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (hh < 60) [r, g, b] = [c, x, 0];
+  else if (hh < 120) [r, g, b] = [x, c, 0];
+  else if (hh < 180) [r, g, b] = [0, c, x];
+  else if (hh < 240) [r, g, b] = [0, x, c];
+  else if (hh < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return {
+    r: Math.round((r + m) * 255),
+    g: Math.round((g + m) * 255),
+    b: Math.round((b + m) * 255),
+  };
+}
+
+function sigmoid(x) {
+  return 1 / (1 + Math.exp(-x));
+}
+
+/**
+ * @typedef {{
+ *  class?: string;
+ *  confidence?: number;
+ *  bbox?: { x: number; y: number; width: number; height: number };
+ *  maskCoeffs?: Float32Array;
+ * }} Detection
+ */
+
+/**
+ * @param {Detection} pred
+ * @param {ort.Tensor} proto
+ * @param {number} inputSize
+ * @param {number} videoWidth
+ * @param {number} videoHeight
+ */
+function renderMaskForDetection(pred, proto, inputSize, videoWidth, videoHeight) {
+  const bbox = pred.bbox;
+  const coeffs = pred.maskCoeffs;
+  if (!bbox || !coeffs || !maskCtx) return;
+  const protoDims = proto.dims;
+  if (protoDims.length !== 4) return;
+  const maskChannels = protoDims[1];
+  const maskHeight = protoDims[2];
+  const maskWidth = protoDims[3];
+  if (coeffs.length !== maskChannels) return;
+  if (!(proto.data instanceof Float32Array)) return;
+  const protoData = proto.data;
+
+  const x0 = Math.max(0, Math.floor(bbox.x));
+  const y0 = Math.max(0, Math.floor(bbox.y));
+  const x1 = Math.min(videoWidth, Math.ceil(bbox.x + bbox.width));
+  const y1 = Math.min(videoHeight, Math.ceil(bbox.y + bbox.height));
+  const boxWidth = x1 - x0;
+  const boxHeight = y1 - y0;
+  if (boxWidth <= 1 || boxHeight <= 1) return;
+
+  const scale = Math.min(inputSize / videoWidth, inputSize / videoHeight);
+  const padX = (inputSize - videoWidth * scale) / 2;
+  const padY = (inputSize - videoHeight * scale) / 2;
+
+  maskCanvas.width = boxWidth;
+  maskCanvas.height = boxHeight;
+  const imageData = maskCtx.createImageData(boxWidth, boxHeight);
+  const out = imageData.data;
+  const hue = classHue(pred.class ?? "unknown");
+  const rgb = hslToRgb(hue, 0.85, 0.52);
+
+  for (let y = 0; y < boxHeight; y++) {
+    const videoY = y0 + y;
+    const modelY = videoY * scale + padY;
+    const py = Math.max(
+      0,
+      Math.min(maskHeight - 1, Math.floor((modelY / inputSize) * maskHeight)),
+    );
+    for (let x = 0; x < boxWidth; x++) {
+      const videoX = x0 + x;
+      const modelX = videoX * scale + padX;
+      const px = Math.max(
+        0,
+        Math.min(maskWidth - 1, Math.floor((modelX / inputSize) * maskWidth)),
+      );
+      let logit = 0;
+      for (let c = 0; c < maskChannels; c++) {
+        logit += coeffs[c] * protoData[c * maskHeight * maskWidth + py * maskWidth + px];
+      }
+      if (sigmoid(logit) < 0.5) continue;
+      const i = (y * boxWidth + x) * 4;
+      out[i] = rgb.r;
+      out[i + 1] = rgb.g;
+      out[i + 2] = rgb.b;
+      out[i + 3] = 105;
+    }
+  }
+
+  maskCtx.putImageData(imageData, 0, 0);
+  ctx.drawImage(maskCanvas, x0, y0);
+}
+
+/** @param {Detection[]} preds */
+function drawOverlay(preds, vw, vh, proto, inputSize) {
   el.canvas.width = vw;
   el.canvas.height = vh;
   ctx.clearRect(0, 0, vw, vh);
@@ -158,20 +282,17 @@ function drawOverlay(preds, vw, vh) {
 
   for (const p of preds) {
     if ((p.confidence ?? 0) < minConf) continue;
+    renderMaskForDetection(p, proto, inputSize, vw, vh);
+  }
+
+  for (const p of preds) {
+    if ((p.confidence ?? 0) < minConf) continue;
     const b = p.bbox;
     if (!b) continue;
-    const norm = isNormalizedBbox(b);
-    const x = norm ? b.x * vw : b.x;
-    const y = norm ? b.y * vh : b.y;
-    const w = norm ? b.width * vw : b.width;
-    const h = norm ? b.height * vh : b.height;
+    const x = b.x;
+    const y = b.y;
     const cls = p.class ?? "unknown";
     const hue = classHue(cls);
-    ctx.strokeStyle = `hsl(${hue} 85% 52%)`;
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, w, h);
-    ctx.fillStyle = `hsla(${hue} 85% 40% / 0.35)`;
-    ctx.fillRect(x, y, w, h);
     const label = `${cls} ${((p.confidence ?? 0) * 100).toFixed(0)}%`;
     ctx.font = "14px system-ui, sans-serif";
     const tw = ctx.measureText(label).width;
@@ -234,25 +355,169 @@ function escapeHtml(s) {
     .replaceAll('"', "&quot;");
 }
 
+function iou(a, b) {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.width, b.x + b.width);
+  const y2 = Math.min(a.y + a.height, b.y + b.height);
+  const iw = Math.max(0, x2 - x1);
+  const ih = Math.max(0, y2 - y1);
+  const inter = iw * ih;
+  const union = a.width * a.height + b.width * b.height - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+function nms(preds, threshold = 0.5) {
+  const sorted = [...preds].sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0));
+  /** @type {Detection[]} */
+  const kept = [];
+  for (const p of sorted) {
+    if (!p.bbox) continue;
+    const overlaps = kept.some(
+      (k) => k.class === p.class && k.bbox && iou(k.bbox, p.bbox) > threshold,
+    );
+    if (!overlaps) kept.push(p);
+  }
+  return kept;
+}
+
+function extractDetections(
+  output,
+  minConfidence,
+  inputSize,
+  videoWidth,
+  videoHeight,
+  maskChannels,
+) {
+  const dims = output.dims;
+  if (dims.length < 3) return [];
+  const data = output.data;
+  if (!(data instanceof Float32Array)) return [];
+
+  let channels;
+  let candidates;
+  let channelsFirst = false;
+  if (dims[1] < dims[2]) {
+    channels = dims[1];
+    candidates = dims[2];
+    channelsFirst = true;
+  } else {
+    candidates = dims[1];
+    channels = dims[2];
+  }
+  const classesCount = Object.keys(classNames).length;
+  const boxOffset = 4;
+  const coeffOffset = boxOffset + classesCount;
+  if (channels < coeffOffset + maskChannels) return [];
+
+  const scale = Math.min(inputSize / videoWidth, inputSize / videoHeight);
+  const padX = (inputSize - videoWidth * scale) / 2;
+  const padY = (inputSize - videoHeight * scale) / 2;
+
+  /** @type {Detection[]} */
+  const detections = [];
+  for (let i = 0; i < candidates; i++) {
+    const at = (c) => {
+      if (channelsFirst) return data[c * candidates + i];
+      return data[i * channels + c];
+    };
+    const cx = at(0);
+    const cy = at(1);
+    const w = at(2);
+    const h = at(3);
+    let clsIdx = -1;
+    let bestScore = 0;
+    for (let c = 0; c < classesCount; c++) {
+      const score = at(boxOffset + c);
+      if (score > bestScore) {
+        bestScore = score;
+        clsIdx = c;
+      }
+    }
+    if (bestScore < minConfidence || clsIdx < 0) continue;
+
+    const x0 = (cx - w / 2 - padX) / scale;
+    const y0 = (cy - h / 2 - padY) / scale;
+    const x1 = (cx + w / 2 - padX) / scale;
+    const y1 = (cy + h / 2 - padY) / scale;
+
+    const x = Math.max(0, Math.min(videoWidth, x0));
+    const y = Math.max(0, Math.min(videoHeight, y0));
+    const bx = Math.max(0, Math.min(videoWidth, x1) - x);
+    const by = Math.max(0, Math.min(videoHeight, y1) - y);
+    if (bx < 2 || by < 2) continue;
+
+    detections.push({
+      class: classNames[clsIdx] ?? `class_${clsIdx}`,
+      confidence: bestScore,
+      bbox: { x, y, width: bx, height: by },
+      maskCoeffs: new Float32Array(
+        Array.from({ length: maskChannels }, (_, idx) => at(coeffOffset + idx)),
+      ),
+    });
+  }
+  return nms(detections, 0.5);
+}
+
+function preprocessFrame(video, inputSize) {
+  const offscreen = document.createElement("canvas");
+  offscreen.width = inputSize;
+  offscreen.height = inputSize;
+  const c = offscreen.getContext("2d");
+  if (!c) throw new Error("Canvas context unavailable.");
+  c.fillStyle = "#000";
+  c.fillRect(0, 0, inputSize, inputSize);
+
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const scale = Math.min(inputSize / vw, inputSize / vh);
+  const drawW = Math.round(vw * scale);
+  const drawH = Math.round(vh * scale);
+  const dx = Math.floor((inputSize - drawW) / 2);
+  const dy = Math.floor((inputSize - drawH) / 2);
+  c.drawImage(video, 0, 0, vw, vh, dx, dy, drawW, drawH);
+  const pixels = c.getImageData(0, 0, inputSize, inputSize).data;
+  const chw = new Float32Array(3 * inputSize * inputSize);
+  const channelSize = inputSize * inputSize;
+  for (let i = 0; i < channelSize; i++) {
+    const p = i * 4;
+    chw[i] = pixels[p] / 255;
+    chw[channelSize + i] = pixels[p + 1] / 255;
+    chw[channelSize * 2 + i] = pixels[p + 2] / 255;
+  }
+  return new ort.Tensor("float32", chw, [1, 3, inputSize, inputSize]);
+}
+
 async function inferFrame() {
-  if (!inferEngine || !workerId || el.video.readyState < 2) return;
+  if (!session || el.video.readyState < 2) return;
   const vw = el.video.videoWidth;
   const vh = el.video.videoHeight;
   if (!vw || !vh) return;
-
-  const cvImg = new CVImage(el.video);
-  try {
-    const preds = await inferEngine.infer(workerId, cvImg);
-    drawOverlay(preds, vw, vh);
-    summarizeFrame(preds);
-  } finally {
-    cvImg.dispose();
+  const inputSize = Math.max(32, config.inputSize || 640);
+  const tensor = preprocessFrame(el.video, inputSize);
+  const feeds = { [session.inputNames[0]]: tensor };
+  const outputs = await session.run(feeds);
+  const outputList = session.outputNames.map((name) => outputs[name]).filter(Boolean);
+  const detectionOutput = outputList.find((t) => t.dims.length === 3);
+  const protoOutput = outputList.find((t) => t.dims.length === 4);
+  if (!detectionOutput || !protoOutput) {
+    throw new Error("Expected YOLOv8-seg outputs (detections + mask prototypes).");
   }
+  const preds = extractDetections(
+    detectionOutput,
+    config.minConfidence,
+    inputSize,
+    vw,
+    vh,
+    protoOutput.dims[1],
+  );
+  drawOverlay(preds, vw, vh, protoOutput, inputSize);
+  summarizeFrame(preds);
 }
 
 function loop(time) {
   rafId = requestAnimationFrame(loop);
-  if (!workerId || inferBusy) return;
+  if (!session || inferBusy) return;
   const maxFps = Math.max(1, Math.min(30, config.maxFps || 8));
   const interval = 1000 / maxFps;
   if (time - lastInferTime < interval) return;
@@ -287,9 +552,9 @@ async function startCamera() {
 }
 
 function openSettings() {
-  el.cfgKey.value = config.publishableKey;
-  el.cfgModel.value = config.modelId;
-  el.cfgVersion.value = String(config.modelVersion);
+  el.cfgKey.value = config.modelUrl;
+  el.cfgModel.value = config.classesUrl;
+  el.cfgVersion.value = String(config.inputSize);
   el.cfgConfidence.value = String(config.minConfidence);
   el.cfgFps.value = String(config.maxFps);
   renderChipRows();
@@ -354,9 +619,9 @@ function readChipValuesFromForm() {
 }
 
 function applySettingsFromForm() {
-  config.publishableKey = el.cfgKey.value.trim();
-  config.modelId = el.cfgModel.value.trim();
-  config.modelVersion = Math.max(1, parseInt(el.cfgVersion.value, 10) || 1);
+  config.modelUrl = el.cfgKey.value.trim();
+  config.classesUrl = el.cfgModel.value.trim();
+  config.inputSize = Math.max(32, parseInt(el.cfgVersion.value, 10) || 640);
   config.minConfidence = Math.min(
     1,
     Math.max(0, parseFloat(el.cfgConfidence.value) || 0),
@@ -381,17 +646,17 @@ el.btnSave.addEventListener("click", async (e) => {
   e.preventDefault();
   applySettingsFromForm();
   closeSettings();
-  await ensureWorker();
+  await ensureModel();
 });
 
 el.form.addEventListener("submit", (e) => e.preventDefault());
 
 async function init() {
   cancelAnimationFrame(rafId);
-  await stopInference();
+  stopInference();
   config = loadConfig();
   await startCamera();
-  await ensureWorker();
+  await ensureModel();
   rafId = requestAnimationFrame(loop);
 }
 

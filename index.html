@@ -24,7 +24,7 @@
         </button>
       </header>
 
-      <p class="hint" id="status-line">Configure your Roboflow model in settings, then allow camera access.</p>
+      <p class="hint" id="status-line">Configure your ONNX model in settings, then allow camera access.</p>
 
       <main class="layout">
         <section class="video-panel">
@@ -48,23 +48,21 @@
     <dialog id="settings-dialog" class="settings-dialog">
       <form id="settings-form" novalidate>
         <h2>Configuration</h2>
-        <p class="form-hint">
-          Roboflow publishable key and model slug are stored only in this browser (localStorage).
-        </p>
+        <p class="form-hint">Model paths are stored only in this browser (localStorage).</p>
 
         <label class="field">
-          <span>Publishable API key</span>
-          <input type="password" id="cfg-key" name="publishableKey" autocomplete="off" placeholder="rf_..." />
+          <span>Model URL (.onnx)</span>
+          <input type="text" id="cfg-key" name="modelUrl" autocomplete="off" placeholder="models/model.onnx" />
         </label>
 
         <label class="field">
-          <span>Model slug (workspace/project)</span>
-          <input type="text" id="cfg-model" name="modelId" autocomplete="off" placeholder="my-workspace/chip-counter" />
+          <span>Classes URL (classes.json)</span>
+          <input type="text" id="cfg-model" name="classesUrl" autocomplete="off" placeholder="models/classes.json" />
         </label>
 
         <label class="field">
-          <span>Model version</span>
-          <input type="number" id="cfg-version" name="modelVersion" min="1" step="1" value="1" />
+          <span>Model input size</span>
+          <input type="number" id="cfg-version" name="inputSize" min="32" step="32" value="640" />
         </label>
 
         <label class="field inline">
@@ -79,7 +77,7 @@
 
         <fieldset class="chip-values">
           <legend>Chip value by class</legend>
-          <p class="form-hint">Use the exact class names from your Roboflow model. New classes appear here after they are seen in the video.</p>
+          <p class="form-hint">Use the exact class names from your model. New classes appear here after they are seen in the video.</p>
           <div id="chip-rows"></div>
           <button type="button" class="secondary" id="btn-add-class">Add class</button>
         </fieldset>
