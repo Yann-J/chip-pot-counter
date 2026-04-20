@@ -1,0 +1,10 @@
+{
+  "task": "segmentation",
+  "framework": "ultralytics-yolov8",
+  "format": "onnx",
+  "input_size": 640,
+  "classes_count": 8,
+  "classes_file": "classes.json",
+  "model_file": "model.onnx",
+  "exported_at_utc": "2026-04-20T11:36:11.623285+00:00"
+}

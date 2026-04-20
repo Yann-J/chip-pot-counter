@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      # Copy models for static hosting
+      - run: cp -R models dist/models
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
