@@ -1,0 +1,17 @@
+{
+  "name": "Chip pot counter",
+  "short_name": "ChipPot",
+  "description": "Estimate poker pot value from camera detections.",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#b71f2e",
+  "icons": [
+    {
+      "src": "/webapp-icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
