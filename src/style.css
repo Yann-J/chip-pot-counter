@@ -23,6 +23,7 @@ body {
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
+  overflow-x: hidden;
 }
 
 #app {
@@ -254,6 +255,7 @@ h1 {
 
 .settings-dialog form {
   padding: 1.25rem 1.35rem 1.4rem;
+  overflow-x: hidden;
 }
 
 .form-hint {
@@ -309,19 +311,32 @@ h1 {
 
 .chip-row {
   display: grid;
-  grid-template-columns: 1fr 100px 36px;
+  grid-template-columns: minmax(0, 1fr) 100px 36px;
   gap: 0.5rem;
   margin-bottom: 0.5rem;
   align-items: center;
 }
 
 .chip-row input {
+  width: 100%;
+  min-width: 0;
   padding: 0.45rem 0.5rem;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
   font-size: 0.9rem;
+}
+
+@media (max-width: 520px) {
+  .settings-dialog form {
+    padding: 1rem;
+  }
+
+  .chip-row {
+    grid-template-columns: minmax(0, 1fr) 84px 32px;
+    gap: 0.4rem;
+  }
 }
 
 .row-remove {

@@ -100,6 +100,7 @@ let modelConfigKey = null;
 let lastInferTime = 0;
 let inferBusy = false;
 let capturePaused = false;
+let shouldResumeAfterSettings = false;
 /** @type {Record<string, number>} */
 let lastCounts = {};
 let rafId = 0;
@@ -612,6 +613,7 @@ async function startCamera() {
 }
 
 function openSettings() {
+  shouldResumeAfterSettings = !capturePaused;
   setCapturePaused(true, "settings");
   el.cfgKey.value = config.modelUrl;
   el.cfgModel.value = config.classesUrl;
@@ -625,7 +627,6 @@ function openSettings() {
 
 function closeSettings() {
   el.dialog.close();
-  el.backdrop.classList.add("hidden");
 }
 
 function renderChipRows() {
@@ -709,6 +710,12 @@ el.backdrop.addEventListener("click", () => closeSettings());
 
 el.dialog.addEventListener("close", () => {
   el.backdrop.classList.add("hidden");
+  if (shouldResumeAfterSettings) {
+    shouldResumeAfterSettings = false;
+    setCapturePaused(false, "settings");
+    return;
+  }
+  shouldResumeAfterSettings = false;
 });
 
 el.btnSave.addEventListener("click", async (e) => {
