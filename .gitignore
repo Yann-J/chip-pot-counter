@@ -2,3 +2,8 @@ node_modules
 dist
 .DS_Store
 *.local
+dataset
+runs
+Poker-Chip-Stacks-3
+*.pt
+.env

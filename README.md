@@ -57,3 +57,7 @@ On push to `main`, [.github/workflows/deploy-pages.yml](.github/workflows/deploy
 ## Train a new model
 
 The model training is implemented in [train_yolov8_seg.ipynb](train_yolov8_seg.ipynb), which is known to run fine on [Google Colab](https://colab.research.google.com/). It requires access to a dataset from Roboflow, which you can fork from [my public workspace](https://app.roboflow.com/yanns-workspace-ufdsd/poker-chip-stacks-j395l/models), and configure your `ROBOFLOW_API_KEY` secret in colab.
+
+The notebook can also upload the model to some github repo after training completion.
+
+Click here to [open the notebook in colab](https://colab.research.google.com/github/Yann-J/chip-pot-counter/blob/main/train_yolov8_seg.ipynb).
