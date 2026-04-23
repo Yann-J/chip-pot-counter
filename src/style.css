@@ -46,11 +46,33 @@ body {
   gap: 0.5rem;
 }
 
+.top-title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+}
+
 h1 {
   font-size: 1.35rem;
   font-weight: 600;
   margin: 0;
   letter-spacing: -0.02em;
+}
+
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  text-decoration: none;
+  line-height: 1;
+}
+
+.github-link .bi {
+  font-size: 1rem;
+}
+
+.github-link:hover {
+  color: var(--accent);
 }
 
 .hint {
