@@ -8,7 +8,7 @@ const ORT_WASM_DIST = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
 // `application/wasm` so ORT can initialize consistently.
 ort.env.wasm.wasmPaths = ORT_WASM_DIST;
 
-/** @typedef {{ modelUrl: string; classesUrl: string; inputSize: number; minConfidence: number; maxFps: number; chipValues: Record<string, number> }} AppConfig */
+/** @typedef {{ modelUrl: string; classesUrl: string; inputSize: number; minConfidence: number; maxFps: number; iouThreshold: number; chipValues: Record<string, number> }} AppConfig */
 
 function defaultConfig() {
   return {
@@ -17,6 +17,7 @@ function defaultConfig() {
     inputSize: 640,
     minConfidence: 0.4,
     maxFps: 8,
+    iouThreshold: 0.8,
     chipValues: {},
   };
 }
@@ -75,6 +76,9 @@ const el = {
     document.getElementById("cfg-confidence")
   ),
   cfgFps: /** @type {HTMLInputElement} */ (document.getElementById("cfg-fps")),
+  cfgIou: /** @type {HTMLInputElement} */ (
+    document.getElementById("cfg-iou")
+  ),
   chipRows: document.getElementById("chip-rows"),
   btnAddClass: document.getElementById("btn-add-class"),
   btnCancel: document.getElementById("btn-cancel-settings"),
@@ -206,12 +210,6 @@ async function ensureModel() {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`Model failed to load: ${msg}`);
   }
-}
-
-function isNormalizedBbox(b) {
-  if (!b) return false;
-  const vals = [b.x, b.y, b.width, b.height];
-  return vals.every((v) => typeof v === "number" && v >= 0 && v <= 1.0001);
 }
 
 function hslToRgb(h, s, l) {
@@ -441,6 +439,7 @@ function nms(preds, threshold = 0.5) {
 function extractDetections(
   output,
   minConfidence,
+  iouThreshold,
   inputSize,
   videoWidth,
   videoHeight,
@@ -513,7 +512,7 @@ function extractDetections(
       ),
     });
   }
-  return nms(detections, 0.5);
+  return nms(detections, iouThreshold);
 }
 
 function preprocessFrame(video, inputSize) {
@@ -567,6 +566,7 @@ async function inferFrame() {
   const preds = extractDetections(
     detectionOutput,
     config.minConfidence,
+    config.iouThreshold,
     inputSize,
     vw,
     vh,
@@ -620,6 +620,7 @@ function openSettings() {
   el.cfgVersion.value = String(config.inputSize);
   el.cfgConfidence.value = String(config.minConfidence);
   el.cfgFps.value = String(config.maxFps);
+  el.cfgIou.value = String(config.iouThreshold);
   renderChipRows();
   el.backdrop.classList.remove("hidden");
   el.dialog.showModal();
@@ -689,6 +690,11 @@ function applySettingsFromForm() {
     Math.max(0, parseFloat(el.cfgConfidence.value) || 0),
   );
   config.maxFps = Math.min(30, Math.max(1, parseInt(el.cfgFps.value, 10) || 8));
+  const iouRaw = parseFloat(el.cfgIou.value);
+  config.iouThreshold = Math.min(
+    1,
+    Math.max(0, Number.isFinite(iouRaw) ? iouRaw : 0.8),
+  );
   config.chipValues = readChipValuesFromForm();
   for (const k of Object.keys(config.chipValues)) discoveredClasses.add(k);
   saveConfig(config);
