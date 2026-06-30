@@ -7,7 +7,34 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
     />
     <meta name="theme-color" content="#b71f2e" />
+    <meta
+      name="description"
+      content="Count poker chips from your camera and estimate pot value with in-browser YOLOv8 detection."
+    />
     <title>Chip pot counter</title>
+
+    <!-- Social / WhatsApp preview -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Chip pot counter" />
+    <meta property="og:title" content="Chip pot counter" />
+    <meta
+      property="og:description"
+      content="Count poker chips from your camera and estimate pot value with in-browser YOLOv8 detection."
+    />
+    <meta property="og:url" content="https://yann-j.github.io/chip-pot-counter/" />
+    <meta property="og:image" content="https://yann-j.github.io/chip-pot-counter/og-card.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="400" />
+    <meta property="og:image:alt" content="Chip pot counter — poker chip detection app" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Chip pot counter" />
+    <meta
+      name="twitter:description"
+      content="Count poker chips from your camera and estimate pot value with in-browser YOLOv8 detection."
+    />
+    <meta name="twitter:image" content="https://yann-j.github.io/chip-pot-counter/og-card.png" />
+    <meta name="twitter:image:alt" content="Chip pot counter — poker chip detection app" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icon-180.png" />
@@ -58,7 +85,8 @@
       <main class="layout">
         <section class="video-panel">
           <div class="video-wrap">
-            <video id="camera" playsinline muted autoplay></video>
+            <video id="camera" playsinline muted autoplay hidden></video>
+            <canvas id="preview"></canvas>
             <canvas id="overlay"></canvas>
           </div>
         </section>

@@ -50,9 +50,58 @@ function classHue(cls) {
   return h % 360;
 }
 
+/** @param {CanvasRenderingContext2D | null} context */
+function configureCanvasContext(context) {
+  if (!context) return;
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+}
+
+/**
+ * Center square crop matching training-time preprocessing.
+ * @param {number} videoWidth
+ * @param {number} videoHeight
+ */
+function getCenterCropRect(videoWidth, videoHeight) {
+  const side = Math.min(videoWidth, videoHeight);
+  return {
+    sx: Math.floor((videoWidth - side) / 2),
+    sy: Math.floor((videoHeight - side) / 2),
+    side,
+  };
+}
+
+/**
+ * @param {CanvasRenderingContext2D} context
+ * @param {HTMLVideoElement} video
+ * @param {number} destSize
+ */
+function drawCenterCrop(context, video, destSize) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const crop = getCenterCropRect(vw, vh);
+  context.clearRect(0, 0, destSize, destSize);
+  context.drawImage(
+    video,
+    crop.sx,
+    crop.sy,
+    crop.side,
+    crop.side,
+    0,
+    0,
+    destSize,
+    destSize,
+  );
+  return crop;
+}
+
 const el = {
   status: document.getElementById("status-line"),
   video: /** @type {HTMLVideoElement} */ (document.getElementById("camera")),
+  preview: /** @type {HTMLCanvasElement} */ (
+    document.getElementById("preview")
+  ),
   canvas: /** @type {HTMLCanvasElement} */ (document.getElementById("overlay")),
   classCounts: document.getElementById("class-counts"),
   potTotal: document.getElementById("pot-total"),
@@ -76,9 +125,7 @@ const el = {
     document.getElementById("cfg-confidence")
   ),
   cfgFps: /** @type {HTMLInputElement} */ (document.getElementById("cfg-fps")),
-  cfgIou: /** @type {HTMLInputElement} */ (
-    document.getElementById("cfg-iou")
-  ),
+  cfgIou: /** @type {HTMLInputElement} */ (document.getElementById("cfg-iou")),
   chipRows: document.getElementById("chip-rows"),
   btnAddClass: document.getElementById("btn-add-class"),
   btnCancel: document.getElementById("btn-cancel-settings"),
@@ -86,8 +133,34 @@ const el = {
 };
 
 const ctx = el.canvas.getContext("2d");
+const previewCtx = el.preview.getContext("2d");
 const maskCanvas = document.createElement("canvas");
 const maskCtx = maskCanvas.getContext("2d");
+const preprocessCanvas = document.createElement("canvas");
+/** @type {CanvasRenderingContext2D | null} */
+let preprocessCtx = null;
+
+configureCanvasContext(ctx);
+configureCanvasContext(previewCtx);
+configureCanvasContext(maskCtx);
+
+function syncCropCanvases(cropSide) {
+  if (el.preview.width === cropSide && el.canvas.width === cropSide) return;
+  el.preview.width = cropSide;
+  el.preview.height = cropSide;
+  el.canvas.width = cropSide;
+  el.canvas.height = cropSide;
+}
+
+function drawPreview() {
+  if (!previewCtx || el.video.readyState < 2) return;
+  const vw = el.video.videoWidth;
+  const vh = el.video.videoHeight;
+  if (!vw || !vh) return;
+  const { side } = getCenterCropRect(vw, vh);
+  syncCropCanvases(side);
+  drawCenterCrop(previewCtx, el.video, side);
+}
 
 /** @type {AppConfig} */
 let config = loadConfig();
@@ -252,16 +325,9 @@ function sigmoid(x) {
  * @param {Detection} pred
  * @param {ort.Tensor} proto
  * @param {number} inputSize
- * @param {number} videoWidth
- * @param {number} videoHeight
+ * @param {number} cropSide
  */
-function renderMaskForDetection(
-  pred,
-  proto,
-  inputSize,
-  videoWidth,
-  videoHeight,
-) {
+function renderMaskForDetection(pred, proto, inputSize, cropSide) {
   const bbox = pred.bbox;
   const coeffs = pred.maskCoeffs;
   if (!bbox || !coeffs || !maskCtx) return;
@@ -276,15 +342,13 @@ function renderMaskForDetection(
 
   const x0 = Math.max(0, Math.floor(bbox.x));
   const y0 = Math.max(0, Math.floor(bbox.y));
-  const x1 = Math.min(videoWidth, Math.ceil(bbox.x + bbox.width));
-  const y1 = Math.min(videoHeight, Math.ceil(bbox.y + bbox.height));
+  const x1 = Math.min(cropSide, Math.ceil(bbox.x + bbox.width));
+  const y1 = Math.min(cropSide, Math.ceil(bbox.y + bbox.height));
   const boxWidth = x1 - x0;
   const boxHeight = y1 - y0;
   if (boxWidth <= 1 || boxHeight <= 1) return;
 
-  const scale = Math.min(inputSize / videoWidth, inputSize / videoHeight);
-  const padX = (inputSize - videoWidth * scale) / 2;
-  const padY = (inputSize - videoHeight * scale) / 2;
+  const scale = inputSize / cropSide;
 
   maskCanvas.width = boxWidth;
   maskCanvas.height = boxHeight;
@@ -294,15 +358,15 @@ function renderMaskForDetection(
   const rgb = hslToRgb(hue, 0.85, 0.52);
 
   for (let y = 0; y < boxHeight; y++) {
-    const videoY = y0 + y;
-    const modelY = videoY * scale + padY;
+    const cropY = y0 + y;
+    const modelY = cropY * scale;
     const py = Math.max(
       0,
       Math.min(maskHeight - 1, Math.floor((modelY / inputSize) * maskHeight)),
     );
     for (let x = 0; x < boxWidth; x++) {
-      const videoX = x0 + x;
-      const modelX = videoX * scale + padX;
+      const cropX = x0 + x;
+      const modelX = cropX * scale;
       const px = Math.max(
         0,
         Math.min(maskWidth - 1, Math.floor((modelX / inputSize) * maskWidth)),
@@ -327,15 +391,13 @@ function renderMaskForDetection(
 }
 
 /** @param {Detection[]} preds */
-function drawOverlay(preds, vw, vh, proto, inputSize) {
-  el.canvas.width = vw;
-  el.canvas.height = vh;
-  ctx.clearRect(0, 0, vw, vh);
+function drawOverlay(preds, cropSide, proto, inputSize) {
+  ctx.clearRect(0, 0, cropSide, cropSide);
   const minConf = config.minConfidence;
 
   for (const p of preds) {
     if ((p.confidence ?? 0) < minConf) continue;
-    renderMaskForDetection(p, proto, inputSize, vw, vh);
+    renderMaskForDetection(p, proto, inputSize, cropSide);
   }
 
   for (const p of preds) {
@@ -441,8 +503,7 @@ function extractDetections(
   minConfidence,
   iouThreshold,
   inputSize,
-  videoWidth,
-  videoHeight,
+  cropSide,
   maskChannels,
 ) {
   const dims = output.dims;
@@ -466,9 +527,7 @@ function extractDetections(
   const coeffOffset = boxOffset + classesCount;
   if (channels < coeffOffset + maskChannels) return [];
 
-  const scale = Math.min(inputSize / videoWidth, inputSize / videoHeight);
-  const padX = (inputSize - videoWidth * scale) / 2;
-  const padY = (inputSize - videoHeight * scale) / 2;
+  const scale = inputSize / cropSide;
 
   /** @type {Detection[]} */
   const detections = [];
@@ -492,15 +551,15 @@ function extractDetections(
     }
     if (bestScore < minConfidence || clsIdx < 0) continue;
 
-    const x0 = (cx - w / 2 - padX) / scale;
-    const y0 = (cy - h / 2 - padY) / scale;
-    const x1 = (cx + w / 2 - padX) / scale;
-    const y1 = (cy + h / 2 - padY) / scale;
+    const x0 = (cx - w / 2) / scale;
+    const y0 = (cy - h / 2) / scale;
+    const x1 = (cx + w / 2) / scale;
+    const y1 = (cy + h / 2) / scale;
 
-    const x = Math.max(0, Math.min(videoWidth, x0));
-    const y = Math.max(0, Math.min(videoHeight, y0));
-    const bx = Math.max(0, Math.min(videoWidth, x1) - x);
-    const by = Math.max(0, Math.min(videoHeight, y1) - y);
+    const x = Math.max(0, Math.min(cropSide, x0));
+    const y = Math.max(0, Math.min(cropSide, y0));
+    const bx = Math.max(0, Math.min(cropSide, x1) - x);
+    const by = Math.max(0, Math.min(cropSide, y1) - y);
     if (bx < 2 || by < 2) continue;
 
     detections.push({
@@ -516,23 +575,18 @@ function extractDetections(
 }
 
 function preprocessFrame(video, inputSize) {
-  const offscreen = document.createElement("canvas");
-  offscreen.width = inputSize;
-  offscreen.height = inputSize;
-  const c = offscreen.getContext("2d");
-  if (!c) throw new Error("Canvas context unavailable.");
-  c.fillStyle = "#000";
-  c.fillRect(0, 0, inputSize, inputSize);
+  if (preprocessCanvas.width !== inputSize) {
+    preprocessCanvas.width = inputSize;
+    preprocessCanvas.height = inputSize;
+    preprocessCtx = preprocessCanvas.getContext("2d");
+    configureCanvasContext(preprocessCtx);
+  }
+  if (!preprocessCtx) throw new Error("Canvas context unavailable.");
 
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  const scale = Math.min(inputSize / vw, inputSize / vh);
-  const drawW = Math.round(vw * scale);
-  const drawH = Math.round(vh * scale);
-  const dx = Math.floor((inputSize - drawW) / 2);
-  const dy = Math.floor((inputSize - drawH) / 2);
-  c.drawImage(video, 0, 0, vw, vh, dx, dy, drawW, drawH);
-  const pixels = c.getImageData(0, 0, inputSize, inputSize).data;
+  const drawn = drawCenterCrop(preprocessCtx, video, inputSize);
+  if (!drawn) throw new Error("Video frame not ready.");
+
+  const pixels = preprocessCtx.getImageData(0, 0, inputSize, inputSize).data;
   const chw = new Float32Array(3 * inputSize * inputSize);
   const channelSize = inputSize * inputSize;
   for (let i = 0; i < channelSize; i++) {
@@ -550,6 +604,10 @@ async function inferFrame() {
   const vh = el.video.videoHeight;
   if (!vw || !vh) return;
   const inputSize = Math.max(32, config.inputSize || 640);
+  const { side: cropSide } = getCenterCropRect(vw, vh);
+  syncCropCanvases(cropSide);
+  drawPreview();
+
   const tensor = preprocessFrame(el.video, inputSize);
   const feeds = { [session.inputNames[0]]: tensor };
   const outputs = await session.run(feeds);
@@ -568,16 +626,16 @@ async function inferFrame() {
     config.minConfidence,
     config.iouThreshold,
     inputSize,
-    vw,
-    vh,
+    cropSide,
     protoOutput.dims[1],
   );
-  drawOverlay(preds, vw, vh, protoOutput, inputSize);
+  drawOverlay(preds, cropSide, protoOutput, inputSize);
   summarizeFrame(preds);
 }
 
 function loop(time) {
   rafId = requestAnimationFrame(loop);
+  drawPreview();
   if (!session || inferBusy || capturePaused) return;
   const maxFps = Math.max(1, Math.min(30, config.maxFps || 8));
   const interval = 1000 / maxFps;
@@ -595,17 +653,37 @@ function loop(time) {
 }
 
 async function startCamera() {
+  const baseVideo = {
+    facingMode: "environment",
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+  };
+  const advancedVideo = {
+    ...baseVideo,
+    // @ts-expect-error non-standard but widely supported on mobile
+    focusMode: { ideal: "continuous" },
+    // @ts-expect-error non-standard but widely supported on mobile
+    exposureMode: { ideal: "continuous" },
+    // @ts-expect-error non-standard but widely supported on mobile
+    whiteBalanceMode: { ideal: "continuous" },
+  };
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: "environment",
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-      },
-      audio: false,
-    });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: advancedVideo,
+        audio: false,
+      });
+    } catch {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: baseVideo,
+        audio: false,
+      });
+    }
     el.video.srcObject = stream;
     await el.video.play();
+    drawPreview();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     setStatus(`Camera error: ${msg}`);
