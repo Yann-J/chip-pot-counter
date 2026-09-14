@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "copy-models": "node scripts/copy-models.js",
+    "dev": "npm run copy-models && vite",
+    "build": "npm run copy-models && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
